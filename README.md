@@ -1,0 +1,1 @@
+This repository contains code that underlies the analysis in the paper titled "The Role of Loneliness and Social Isolation in Mediating the Relationship Between Childhood Maltreatment and Schizophrenia: A Genetically Informed Approach"
