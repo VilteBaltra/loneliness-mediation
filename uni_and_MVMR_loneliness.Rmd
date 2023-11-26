@@ -1,6 +1,6 @@
 ---
 title: "MVMR_loneliness"
-date: "4/18/2022"
+date: "31/10/2023"
 output: html_document
 ---
 
@@ -16,10 +16,11 @@ knitr::opts_chunk$set(echo = TRUE)
 library(TwoSampleMR)
 library(tidyverse)
 library("readr")
+library(ggplot2)
 
 # define directories
-input = "path/to/input/data"
-output = "path/to/output/"
+input = "/path/to/input/data/"
+output = "/path/to/output/"
 ```
 
 
@@ -28,7 +29,6 @@ output = "path/to/output/"
 ```{r}
 # read in Childhood maltreatment Warrier et al. (2021) SNPs 
 cm_original <- readxl::read_excel(paste0(input, "ind_snps_maltreatment_original14.xlsx"))
-#cm <- read.csv('proxy_cm_loci_14.csv')
 
 # rename the columns to match what Two Sample MR package is expecting 
 cm_original <- cm_original %>% rename(position = 'pos', beta = 'Beta', se = 'SE')
@@ -41,52 +41,27 @@ cm_exp_dat$exposure <- "maltreatment" # define exposure as maltreatment
 head(cm_exp_dat)
 ```
 
-
-```{r eval = FALSE}
-################################
-# OUTCOME DATA
-################################
-# read in schizophrenia data 
-schizo <- read.delim("paste0(input, schizophrenia_rsid.txt.gz"))
-#to calculate the natural log, use the log() function (does the opposite of exponentiate) 
-schizo <- schizo %>% mutate(log_beta = log(OR))
-# save the new file 
-# save cleaned data
-write.table(schizo, file = paste0(input, "schizophrenia_rsid_logbeta.txt"), row.names = FALSE, quote = FALSE, sep = '\t')
-
-# convert OR to beta
-# calculate beta coefficient and its error from OR from GWAS summary Statisitcs
-# Beta= log(OR)
-# SE of Beta
-# You can calculate the upper and lower bounds for the OR by
-# Upper bound = OR + se(OR) x 1.96
-# Lower bound = OR - se(OR) x 1.96
-# Log(upper bound of OR) = upper bound of beta
-# Log(lower bound of OR) = lower bound of beta
-# If you have the 95% C.I of beta, then calculating the SE(beta) is quite simple!
-# for example if beta = 0.5 and the upper C.I is 0.6 then
-# upper C.I of beta = beta + se(beta) x 1.96
-# 0.6 = 0.5 + se x 1.96
-# Assuming the confidence interval being used is 95%.
-```
-
 ```{r}
-# Using local GWAS summary data
+# obtain outcome data using local GWAS summary data
 outcome_dat <- read_outcome_data(
   snps = cm_exp_dat$SNP,
-  filename = paste0(input, "schizophrenia_rsid_logbeta.txt.gz"),
+  filename = paste0(input, "PGC3_SCZ_wave3.european.autosome.public.v3.vcf.tsv.gz"),
   sep = "\t",
-  #sep = " ",
-  snp_col = "SNP",
-  beta_col = "log_beta",
+  snp_col = "ID",
+  beta_col = "BETA",
   se_col = "SE",
   effect_allele_col = "A1",
   other_allele_col = "A2",
-  eaf_col = "Freq.A1",
-  pval_col = "P"
+  eaf_col = "MAF", # originally FCON
+  pval_col = "PVAL"
 )
 outcome_dat$outcome <- 'schizophrenia' 
 
+# which SNPs not in outcome data
+ind <- which(!(cm_exp_dat$SNP %in% outcome_dat$SNP))
+cm_exp_dat$SNP[ind]
+# "rs61818983" "rs77987546" "rs5928362"  "rs6633421" 
+cm_exp_dat[ind,]
 
 ################################
 # HARMONISE DATA
@@ -96,23 +71,30 @@ dat <- harmonise_data(
   exposure_dat = cm_exp_dat, 
   outcome_dat = outcome_dat
 )
-# Harmonising maltreatment (AwUzQA) and schizophrenia (fAavKh)
+# Harmonising maltreatment (c823Dy) and schizophrenia (gRth8Y)
 # Removing the following SNPs for being palindromic with intermediate allele frequencies:
-#   rs4305836, rs5928362
+# rs4305836
 
-nrow(dat) # 12 SNPs remain
+# calculate F statistic 
+# pre-calculate r.outcome using get_r_from_lor() for binary traits
+dat$r.outcome <- get_r_from_lor(lor=dat$beta.outcome, af=dat$eaf.outcome, ncase=53386, ncontrol=77258, prevalence=0.01, model='logit') 
 
-# calculate F statistic (From https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8440862/)
-# eaf.exposure eaf.outcome 
-#R2 = 2*beta * MAF * (1-MAF) 
-# where beta represents the effect value of the genetic variant in the exposure and MAF represents the effect allele frequency
-#F = ((N - K – 1 )  / K) * (R2/(1-R2))
+# obtain variance in phenotype explained by snps
+dat$samplesize.exposure = 185414
+dat$samplesize.outcome =  130644 
+out <- directionality_test(dat)
+out
+N = 185414
+k = 9 # number of snps 
+# for F statistic, use following formula from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8440862/
+# F = ((N - K – 1 )  / K) * (R2/(1-R2))
+# same formula also in https://academic.oup.com/ije/article/40/3/755/745918 
 # Where N represents the sample size, k is the number of SNPs.
-
-Fstat <- dat %>% mutate(R2 = abs(2*beta.exposure * eaf.exposure * (1-eaf.exposure)))
-Fstat <- Fstat %>% mutate(F = ((185414-12-1)  / 12) * (R2/(1-R2)))
-
-#write.csv(Fstat, file = paste0(output, 'Fstat-uniMR-maltreatment-Shizophrenia.csv'))
+Fstat <- dat %>% mutate(F = ((N-k-1)  / k) * (out$snp_r2.exposure /(1-out$snp_r2.exposure ))) 
+# 40.38659
+#snp_r2.exposure = 0.001956636, snp_r2.outcome = 0.0008836139,correct_causal_direction = TRUE, steiger_pval = 5.770016e-05
+write.csv(Fstat, file = paste0(output, 'Fstat-new-uniMR-maltreatment-Shizophrenia-revision.csv'))
+write.csv(out, file = paste0(output, 'Steiger-maltreatment-Shizophrenia-revision.csv'))
 
 ################################
 ## PERFORM MR
@@ -121,7 +103,7 @@ Fstat <- Fstat %>% mutate(F = ((185414-12-1)  / 12) * (R2/(1-R2)))
 res <- mr(dat)
 # generate odds ratios
 res_or <- generate_odds_ratios(res)
-#write.csv(res_or, file = paste0(output, 'results_MR_CM-Shizophrenia_withOR.csv'))
+write.csv(res_or, file = paste0(output, 'results_MR_CM-Shizophrenia_withOR-revision.csv'))
 
 # Horizontal pleiotropy
 ### The intercept term in MR Egger regression can be a useful indication of whether directional horizontal pleiotropy is driving the results of an MR analysis. 
@@ -131,34 +113,32 @@ mr_pleiotropy_test(dat)
 mr_heterogeneity(dat)
 
 # scatter plot
-p1 <- mr_scatter_plot(res, dat)
+p1 <- my_mr_scatter_plot(res, dat)
 p1[[1]]
-
-library(ggplot2)
-ggsave(paste0(output,"scatter-maltreatment-scz.pdf"))
+ggsave(paste0(output,"scatter-maltreatment-scz-revision.png"), dpi = 300, width = 7, height = 6, units = "in")
 
 # forest plot
 res_single <- mr_singlesnp(dat)
 p2 <- mr_forest_plot(res_single)
 p2[[1]]
-ggsave(paste0(output, "singlesnp-maltreatment-scz.pdf"))
+ggsave(paste0(output, "singlesnp-maltreatment-scz-revision.png"))
 
 # Leave-one-out plot
 res_loo <- mr_leaveoneout(dat)
-p3 <- mr_leaveoneout_plot(res_loo)
+p3 <- my_mr_leaveoneout_plot(res_loo)
 p3[[1]]
-ggsave(paste0(output, "leaveoneout-maltreatment-scz.pdf"))
+ggsave(paste0(output, "leaveoneout-maltreatment-scz-revision.png"), dpi = 300, width = 7, height = 6, units = "in")
 
 # Funnel plot
 res_single <- mr_singlesnp(dat)
 p4 <- mr_funnel_plot(res_single)
 p4[[1]]
-ggsave(paste0(output, "funnel-plot-scz.pdf"))
+ggsave(paste0(output, "funnel-plot-maltreatment-scz-revision.png"))
 
 ```
 
 
-### UNIVARIABLE MR: loneliness -> SHZ
+### UNIVARIABLE MR: loneliness -> SCZ
 
 ```{r}
 # read in loneliness SNPs 
@@ -178,16 +158,15 @@ head(loneliness_exp_dat)
 
 outcome_dat <- read_outcome_data(
   snps = loneliness_exp_dat$SNP,
-  filename = paste0(input,  "schizophrenia_rsid_logbeta.txt.gz"),
+  filename = paste0(input, "PGC3_SCZ_wave3.european.autosome.public.v3.vcf.tsv.gz"),
   sep = "\t",
-  #sep = " ",
-  snp_col = "SNP",
-  beta_col = "log_beta",
+  snp_col = "ID",
+  beta_col = "BETA",
   se_col = "SE",
   effect_allele_col = "A1",
   other_allele_col = "A2",
-  eaf_col = "Freq.A1",
-  pval_col = "P"
+  eaf_col = "MAF", # originally FCON in scz sumstats
+  pval_col = "PVAL"
 )
 outcome_dat$outcome <- 'schizophrenia' 
 
@@ -203,12 +182,29 @@ dat <- harmonise_data(
 nrow(dat) # 15 SNPs remain
 
 # calculate F statistic 
-Fstat <- dat %>% mutate(R2 = abs(2*beta.exposure * eaf.exposure * (1-eaf.exposure)))
-Fstat <- Fstat %>% mutate(F = ((487647-15-1)  / 15) * (R2/(1-R2)))
+# pre-calculate r.outcome using get_r_from_lor() for binary traits
+dat$r.outcome <- get_r_from_lor(lor=dat$beta.outcome, af=dat$eaf.outcome, ncase=53386, ncontrol=77258, prevalence=0.01, model='logit') 
 
-Fstat %>% mutate(F = 32508.73 * (R2/(1-R2)))
-
-write.csv(Fstat, file = paste0(output, 'Fstat-uniMR-loneliness-Shizophrenia.csv'))
+# obtain variance in phenotype explained by snps
+dat$samplesize.exposure = 487647
+dat$samplesize.outcome =  130644 
+out <- directionality_test(dat)
+out
+#   id.exposure id.outcome   exposure       outcome snp_r2.exposure snp_r2.outcome correct_causal_direction
+# 1      li16zn     YDUVNT loneliness schizophrenia     0.001190606   0.0006114892                     TRUE
+#   steiger_pval
+# 1  0.001683193
+nrow(dat %>% filter(mr_keep == TRUE)) # check nr of snps to be kept in MR
+N = 487647
+k = 15 # number of snps 
+# for F statistic, use following formula from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8440862/
+# F = ((N - K – 1 )  / K) * (R2/(1-R2))
+# same formula also in https://academic.oup.com/ije/article/40/3/755/745918 
+# Where N represents the sample size, k is the number of SNPs.
+Fstat <- dat %>% mutate(F = ((N-k-1)  / k) * (out$snp_r2.exposure /(1-out$snp_r2.exposure ))) 
+# 38.75124
+write.csv(Fstat, file = paste0(output, 'Fstat-new-uniMR-loneliness-Shizophrenia-revision.csv'))
+write.csv(out, file = paste0(output, 'Steiger-loneliness-Shizophrenia-revision.csv'))
 
 ################################
 ## PERFORM MR
@@ -216,7 +212,7 @@ write.csv(Fstat, file = paste0(output, 'Fstat-uniMR-loneliness-Shizophrenia.csv'
 # for more functions see the tutorial
 res <- mr(dat)
 res_or <- generate_odds_ratios(res)
-#write.csv(res_or, file = paste0(output, 'results_MR_loneliness-Shizophrenia_withOR.csv'))
+write.csv(res_or, file = paste0(output, 'results_MR_loneliness-Shizophrenia_withOR-revision.csv'))
 
 # Horizontal pleiotropy
 ### The intercept term in MR Egger regression can be a useful indication of whether directional horizontal pleiotropy is driving the results of an MR analysis. 
@@ -226,28 +222,28 @@ mr_pleiotropy_test(dat)
 mr_heterogeneity(dat)
 
 # scatter plot
-p1 <- mr_scatter_plot(res, dat)
+p1 <- my_mr_scatter_plot(res, dat)
 p1[[1]]
 library(ggplot2)
-ggsave(paste0(output, "scatter-loneliness-scz.pdf"))
+ggsave(paste0(output, "scatter-loneliness-scz-revision.png"), dpi = 300, width = 7, height = 6, units = "in")
 
 # forest plot
 res_single <- mr_singlesnp(dat)
 p2 <- mr_forest_plot(res_single)
 p2[[1]]
-ggsave(paste0(output, "singlesnp-loneliness-scz.pdf"))
+ggsave(paste0(output, "singlesnp-loneliness-scz-revision.png"))
 
 # Leave-one-out plot
 res_loo <- mr_leaveoneout(dat)
 p3 <- mr_leaveoneout_plot(res_loo)
 p3[[1]]
-ggsave(paste0(output, "leaveoneout-loneliness-scz.pdf"))
+ggsave(paste0(output, "leaveoneout-loneliness-scz-revision.png"), dpi = 300, width = 7, height = 6, units = "in")
 
 # Funnel plot
 res_single <- mr_singlesnp(dat)
 p4 <- mr_funnel_plot(res_single)
 p4[[1]]
-ggsave(paste0(output, "funnel-plot-scz.pdf"))
+ggsave(paste0(output, "funnel-plot-loneliness-scz-revision.png"))
 
 ```
 
@@ -269,15 +265,18 @@ library(tidyverse)
 cm_data <- cm_raw %>% filter(SNP %in% snp_set) 
 cm_data$phenotype <- "Maltreatment"
 names(cm_data) <- c("chr", "position", "SNP", "pval", "effect_allele", "other_allele", "beta", "se", "phenotype")
-#write.csv(cm_data, file = paste0(input, 'cm_data_mvmr.csv'), row.names = F)
+write.csv(cm_data, file = paste0(input, 'cm_data_mvmr_revision.csv'), row.names = F)
 
 # extract snp_set from loneliness data
 # read in loneliness sumstats
 loneliness_raw <- read.delim(paste0(input, 'MTAG_results.txt.gz'))
 head(loneliness_raw)
 
-loneliness_data <- loneliness_raw %>% filter(snpid %in% snp_set) # 25 SNPs here only (4 missing in loneliness raw data)
-#write.csv(loneliness_data, file = paste0(input, 'loneliness_data_mvmr.csv'), row.names = F)
+loneliness_data <- loneliness_raw %>% filter(snpid %in% snp_set) # 25 SNPs here, as still includes 1 palindromic snp (should be 24, 9 for CM + 15 for loneliness)
+# rename header
+names(loneliness_data) <- c("SNP", "chr", "position", "effect_allele", "other_allele", "not-mtag-z", "N", "eaf", "beta", "se", "z", "pval")
+loneliness_data$phenotype <- "Loneliness"
+write.csv(loneliness_data, file = paste0(input, 'loneliness_data_mvmr_revision.csv'), row.names = F)
 ```
 
 ### MVMR using TwoSampleMR package 
@@ -285,35 +284,23 @@ loneliness_data <- loneliness_raw %>% filter(snpid %in% snp_set) # 25 SNPs here 
 library(TwoSampleMR)
 library(tidyverse)
 library("readr")
-library(MRPracticals)
 
-
-exposure_dat  <- mv_extract_exposures_local(c(paste0(input, 'loneliness_data_mvmr.csv'),
-                                              paste0(input, 'cm_data_mvmr.csv')),
+exposure_dat  <- mv_extract_exposures_local(c(paste0(input, 'loneliness_data_mvmr_revision.csv'),
+                                              paste0(input, 'cm_data_mvmr_revision.csv')),
                                             phenotype_col = 'phenotype',
                                             harmonise_strictness=2,sep = ',') # 46 SNPs
 
-# prepare schizophrenia file so that SNPs are separate (and only keep rows with rsid) 
-# gunzip -cd clozuk_pgc2.meta.sumstats.txt.gz | grep -e '^SNP\|^rs' > schizophrenia.txt
-# wc -l schizophrenia.txt
-# 8167164
-#tr -s ': ' '\t' < schizophrenia.txt > schizophrenia2.txt 
-#gunzip -cd schizophrenia.txt.gz | tr -s ': ' '\t' > schizophrenia_rsid.txt 
-# nano to rename columns and gzip to get the final file
-# gzip schizophrenia_rsid.txt  
-
 outcome_dat <- read_outcome_data(
   snps = exposure_dat$SNP,
-  filename = paste0(input, "schizophrenia_rsid_logbeta.txt.gz"),
+  filename = paste0(input, "PGC3_SCZ_wave3.european.autosome.public.v3.vcf.tsv.gz"),
   sep = "\t",
-  #sep = " ",
-  snp_col = "SNP",
-  beta_col = "log_beta",
+  snp_col = "ID",
+  beta_col = "BETA",
   se_col = "SE",
   effect_allele_col = "A1",
   other_allele_col = "A2",
-  eaf_col = "Freq.A1",
-  pval_col = "P"
+  eaf_col = "MAF",
+  pval_col = "PVAL"
 )
 outcome_dat$outcome <- 'schizophrenia' 
 # 23 SNPs
@@ -324,8 +311,7 @@ res_mvmr <- mv_multiple(mvdat) # fits all exposures together (recommended as def
 
 # generate OR
 res_mvmr <- generate_odds_ratios(res_mvmr$result)
-
-#write.csv(res_mvmr, file = paste0(output, 'results_MVMR_loneliness-maltreatment-shizophrenia.csv'))
+write.csv(res_mvmr, file = paste0(output, 'results_MVMR_loneliness-maltreatment-schizophrenia-revision.csv'))
 ```
 
 
@@ -347,21 +333,18 @@ MRMVObject <- mr_mvivw(MRMVInputObject, model = "default",
                           distribution = "normal",
                           alpha = 0.05)
 
-MRMVObject
-
-MRMVObject <- mr_mvivw(MRMVInputObject)
-
 MRMVObject # exactly same output as from TwoSampleMR package
 # MRMVObject$Pvalue 
 
+# run mvmr mr-egger
 MVEgger <- mr_mvegger(MRMVInputObject, orientate = 2)
 
 MVEgger_df <- as.data.frame(cbind(exposure = MVEgger$Exposure, b = MVEgger$Estimate, se = MVEgger$StdError.Est, pval = MVEgger$Pvalue.Est))
-#write.csv(MVEgger_df, file = paste0(output, 'results_MVEgger_maltreatment-loneliness-shizophrenia.csv'))
 
 MVEgger_df$b <- as.numeric(MVEgger_df$b)
 MVEgger_df$se <- as.numeric(MVEgger_df$se)
-generate_odds_ratios(MVEgger_df)
+MVEgger_df <- generate_odds_ratios(MVEgger_df)
+write.csv(MVEgger_df, file = paste0(output, 'results_MVEgger_maltreatment-loneliness-schizophrenia-revision.csv'))
 ######################################
 ```
 
@@ -379,20 +362,19 @@ vignette("MVMR") # vigentte: https://github.com/WSpiller/MVMR/blob/master/vignet
 # package obtained from: https://github.com/WSpiller/MVMR/
 library(MVMR)
 
-my.F  <- format_mvmr(BXGs = mvdat$exposure_beta[, c(1,2)],
-                      BYG = mvdat$exposure_se[, c(1,2)],
-                      seBXGs = mvdat$outcome_beta,
+my.F  <- format_mvmr(BXGs = mvdat$exposure_beta,
+                      BYG = mvdat$outcome_beta,
+                      seBXGs = mvdat$exposure_se,
                       seBYG = mvdat$outcome_se,
                       RSID = rownames(mvdat$exposure_beta))
-                              
-                      
-sres <- strength_mvmr(r_input = my.F, gencov = 0)
+                            
+sres <- strength_mvmr(r_input = my.F, gencov = 0) # Fixing covariance at 0
 # Conditional F-statistics for instrument strength
 # 
 #             exposure1 exposure2
-# F-statistic  6.934204  8.751063 (prior run 9.375003  1.012232, maybe diff set)
+# F-statistic  10.15759   12.2672 
 
-# setting `mvmrcov` to zero should be appropriate given the minimum sample overlap. 
+# setting `mvmrcov` to zero should be appropriate given the minimum sample overlap with outcome.
 ```
 
 
@@ -401,4 +383,31 @@ sres <- strength_mvmr(r_input = my.F, gencov = 0)
 ```{r}
 # heterogeneity is indicative of a violation of the exclusion restriction assumption 
 pres <- pleiotropy_mvmr(r_input = my.F, gencov = 0)
+```
+#### Delta method
+
+```{r}
+# calculate indirect effect 
+# ind.effect = total.effect - direct.effect
+total.effect = 1.236095
+direct.effect = 1.250529
+indirect.effect = total.effect - direct.effect # indirect.effect = 0.009203202
+# -0.014434
+
+# calculate SE of indirect effect 
+se.total.effect = 0.371306
+se.direct.effect = 0.351088
+se.indirect.effect = sqrt(se.total.effect^2 - se.direct.effect^2)
+# 0.1208526
+
+# Calculate the z-score
+z <- indirect.effect / se.indirect.effect
+# -0.1194347
+
+# Calculate the two-tailed p-value
+p_value <- 2 * (1 - pnorm(abs(z))) # same as 2*pnorm(-abs(z))
+# 0.904931
+
+# MEDIATION:
+# indirect effect = -0.014 (se = 0.121), p = 0.904931
 ```
