@@ -397,17 +397,21 @@ indirect.effect = total.effect - direct.effect # indirect.effect = 0.009203202
 # calculate SE of indirect effect 
 se.total.effect = 0.371306
 se.direct.effect = 0.351088
-se.indirect.effect = sqrt(se.total.effect^2 - se.direct.effect^2)
-# 0.1208526
+se.indirect.effect = sqrt(se.total.effect^2 + se.direct.effect^2) 
+# 0.1208526 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
+# 0.5110097
 
 # Calculate the z-score
 z <- indirect.effect / se.indirect.effect
-# -0.1194347
+# -0.1194347 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
+# -0.02824604
 
 # Calculate the two-tailed p-value
 p_value <- 2 * (1 - pnorm(abs(z))) # same as 2*pnorm(-abs(z))
-# 0.904931
+# 0.904931 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
+# 0.9774659
 
 # MEDIATION:
-# indirect effect = -0.014 (se = 0.121), p = 0.904931
+# indirect effect = -0.014 (se = 0.121), p = 0.904931 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
+# indirect effect = -0.014 (se = 0.511), p = 0.9774659 (essentially only SE is larger)
 ```
