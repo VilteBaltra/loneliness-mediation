@@ -247,6 +247,108 @@ ggsave(paste0(output, "funnel-plot-loneliness-scz-revision.png"))
 
 ```
 
+### UNIVARIABLE MR: CM -> loneliness (a path)
+```{r}
+# obtain outcome data using local GWAS summary data
+outcome_dat <- read_outcome_data(
+  snps = cm_exp_dat$SNP,
+  filename = paste0(input, "MTAG_results.txt.gz"),
+  sep = "\t",
+  snp_col = "snpid",
+  beta_col = "mtag_beta",
+  se_col = "mtag_se",
+  effect_allele_col = "a1",
+  other_allele_col = "a2",
+  eaf_col = "freq", 
+  pval_col = "mtag_pval"
+) # CHR BP SNP P A1 A2 BETA SE
+outcome_dat$outcome <- 'loneliness' 
+
+# which SNPs not in outcome data
+ind <- which(!(cm_exp_dat$SNP %in% outcome_dat$SNP))
+cm_exp_dat$SNP[ind]
+# "rs61818983" "rs77987546" "rs5928362"  "rs6633421" 
+cm_exp_dat[ind,]
+
+################################
+# HARMONISE DATA
+################################
+
+dat <- harmonise_data(
+  exposure_dat = cm_exp_dat, 
+  outcome_dat = outcome_dat
+)
+# Harmonising maltreatment (enTKEy) and loneliness (ulA1F0)
+# Removing the following SNPs for being palindromic with intermediate allele frequencies:
+# rs4305836
+
+# calculate F statistic 
+
+# obtain variance in phenotype explained by snps
+dat$samplesize.exposure = 185414
+dat$samplesize.outcome =  487647 
+out <- directionality_test(dat)
+out
+N = 185414
+k = 9 # number of snps 
+# for F statistic, use following formula from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8440862/
+# F = ((N - K – 1 )  / K) * (R2/(1-R2))
+# same formula also in https://academic.oup.com/ije/article/40/3/755/745918 
+# Where N represents the sample size, k is the number of SNPs.
+Fstat <- dat %>% mutate(F = ((N-k-1)  / k) * (out$snp_r2.exposure /(1-out$snp_r2.exposure ))) 
+# 40.38659
+#snp_r2.exposure = 0.001956636, snp_r2.outcome = 0.0008836139,correct_causal_direction = TRUE, steiger_pval = 5.770016e-05
+write.csv(Fstat, file = paste0(output, 'Fstat-new-uniMR-maltreatment-loneliness-revision2-2024.csv'))
+write.csv(out, file = paste0(output, 'Steiger-maltreatment-loneliness-revision2-2024.csv'))
+
+################################
+## PERFORM MR
+################################
+# for more functions see the tutorial
+res <- mr(dat)
+# generate odds ratios
+res_or <- generate_odds_ratios(res)
+write.csv(res_or, file = paste0(output, 'results_MR_CM-loneliness-revision2-2024.csv'))
+
+# Horizontal pleiotropy
+### The intercept term in MR Egger regression can be a useful indication of whether directional horizontal pleiotropy is driving the results of an MR analysis. 
+mr_pleiotropy_test(dat)
+#  id.exposure id.outcome    outcome     exposure egger_intercept          se     pval
+# 1      enTKEy     ulA1F0 loneliness maltreatment      0.01670444 0.009765928 0.130918
+
+# Heterogeneity statistic
+mr_heterogeneity(dat)
+#   id.exposure id.outcome    outcome     exposure                    method        Q Q_df     Q_pval
+# 1      enTKEy     ulA1F0 loneliness maltreatment                  MR Egger 12.44842    7 0.08674352
+# 2      enTKEy     ulA1F0 loneliness maltreatment Inverse variance weighted 17.65142    8 0.02399722
+
+# scatter plot
+source("plot_functions.R")
+p1 <- my_mr_scatter_plot(res, dat)
+p1[[1]]
+ggsave(paste0(output,"scatter-maltreatment-loneliness-revision2-2024.png"), dpi = 300, width = 7, height = 6, units = "in")
+
+# forest plot
+res_single <- mr_singlesnp(dat)
+p2 <- mr_forest_plot(res_single)
+p2[[1]]
+ggsave(paste0(output, "singlesnp-maltreatment-loneliness-revision2-2024.png"))
+
+# Leave-one-out plot
+res_loo <- mr_leaveoneout(dat)
+p3 <- my_mr_leaveoneout_plot(res_loo)
+p3[[1]]
+ggsave(paste0(output, "leaveoneout-maltreatment-loneliness-revision2-2024.png"), dpi = 300, width = 7, height = 6, units = "in")
+
+# Funnel plot
+res_single <- mr_singlesnp(dat)
+p4 <- mr_funnel_plot(res_single)
+p4[[1]]
+ggsave(paste0(output, "funnel-plot-maltreatment-loneliness-revision2-2024.png"))
+
+```
+
+
 ### Preparation for MVMR
 ```{r eval = FALSE}
 # read in independent SNPs for each trait
@@ -384,34 +486,28 @@ sres <- strength_mvmr(r_input = my.F, gencov = 0) # Fixing covariance at 0
 # heterogeneity is indicative of a violation of the exclusion restriction assumption 
 pres <- pleiotropy_mvmr(r_input = my.F, gencov = 0)
 ```
-#### Delta method
 
+#### Product of coefficients 
 ```{r}
 # calculate indirect effect 
-# ind.effect = total.effect - direct.effect
-total.effect = 1.236095
-direct.effect = 1.250529
-indirect.effect = total.effect - direct.effect # indirect.effect = 0.009203202
-# -0.014434
+apath = 0.225111886411753
+bpath = 0.436560049716838
+a.se = 0.0489899991170715
+b.se = 0.477069983297695
+indirect.effect = apath * bpath # 0.09827486
 
 # calculate SE of indirect effect 
-se.total.effect = 0.371306
-se.direct.effect = 0.351088
-se.indirect.effect = sqrt(se.total.effect^2 + se.direct.effect^2) 
-# 0.1208526 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
-# 0.5110097
+se.indirect.effect = sqrt(apath^2 * b.se^2 + bpath^2 * a.se^2)
+# 0.109503
 
 # Calculate the z-score
-z <- indirect.effect / se.indirect.effect
-# -0.1194347 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
-# -0.02824604
+z <- indirect.effect / se.indirect.effect 
+# 0.8974628
 
 # Calculate the two-tailed p-value
 p_value <- 2 * (1 - pnorm(abs(z))) # same as 2*pnorm(-abs(z))
-# 0.904931 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
-# 0.9774659
+# 0.369472
 
-# MEDIATION:
-# indirect effect = -0.014 (se = 0.121), p = 0.904931 # this was obtained using sqrt(se.total.effect^2 - se.direct.effect^2), correct one is:
-# indirect effect = -0.014 (se = 0.511), p = 0.9774659 (essentially only SE is larger)
+# MEDIATION (indirect effect):
+# beta = 0.10 (se = 0.11), p = 0.369
 ```

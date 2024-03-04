@@ -154,7 +154,7 @@ ggsave(paste0(output, "funnel-plot-scz-maltreatment-revision.png"), dpi = 300, w
 ```
 
 
-### UNIVARIABLE MR: Schizophrenia -> Loneliness/isolation
+### UNIVARIABLE MR: Schizophrenia -> Loneliness/isolation (a path)
 
 ```{r}
 # obtain outcome data using local GWAS summary data
@@ -407,35 +407,35 @@ sres <- strength_mvmr(r_input = my.F, gencov = 0) # Fixing covariance at 0
 # heterogeneity is indicative of a violation of the exclusion restriction assumption 
 pres <- pleiotropy_mvmr(r_input = my.F, gencov = 0)
 ```
-#### Delta method
 
+#### Product of coefficients 
 ```{r}
 # calculate indirect effect 
-# ind.effect = total.effect - direct.effect
-total.effect = 0.0471655124586341
-direct.effect = 0.037962305894215
-indirect.effect = total.effect - direct.effect # indirect.effect = 0.009203207
+apath = 0.0218421500601946
+bpath = 0.437901820393217
+a.se = 0.00459151618719045
+b.se = 0.0905789789455504
+indirect.effect = apath * bpath # 0.009564717
 
 # calculate SE of indirect effect 
-se.total.effect = 0.00762057222921708
-se.direct.effect = 0.00752581664079117
-se.indirect.effect = sqrt(se.total.effect^2 - se.direct.effect^2)
-# 0.001198
+se.indirect.effect = sqrt(apath^2 * b.se^2 + bpath^2 * a.se^2)
+# 0.002820792
 
 # Calculate the z-score
 z <- indirect.effect / se.indirect.effect 
-# 7.68214
+# 3.390791
 
 # Calculate the two-tailed p-value
 p_value <- 2 * (1 - pnorm(abs(z))) # same as 2*pnorm(-abs(z))
-#  1.554312e-14
+# 0.0006969124
 
 # MEDIATION (indirect effect):
-# beta = 0.009 (se = 0.001), p < 0.001
+# beta = 0.01 (se = 0.00), p < 0.001
 
 # calculate proportion mediated 
+total.effect = 0.0471655
 prop.mediated = indirect.effect / total.effect * 100 
-# 19.51258 % 
+# 20.28 %
 ```
 
 
